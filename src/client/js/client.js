@@ -82,38 +82,49 @@ socket.on('leave', leftedUser => {
 });
 
 // on a user requested to chat by me or join to the channel which is me admin of 
+// Helper function to finalize the acceptance logic
+function acceptRequest(data, reqChannel) {
+    var encryptedChannelKey = reqChannel.channelKey.asymEncrypt(data.pubKey);
+    socket.emit("accept", { to: data.from, channelKey: encryptedChannelKey, channel: reqChannel.name });
+    chatStarted(reqChannel.name);
+}
+
 socket.on('request', data => {
-	var reqUser = lstUsers[data.from];
-	if (reqUser == null) {
-		socket.emit("reject", { to: data.from, channel: data.channel, msg: "I don't know who requested!" });
-		return; // incorrect request from
-	}
+    var reqUser = lstUsers[data.from];
+    if (reqUser == null) {
+        socket.emit("reject", { to: data.from, channel: data.channel, msg: "I don't know who requested!" });
+        return; 
+    }
 
-	var reqChannel = getChannels()[data.channel];
+    var reqChannel = getChannels()[data.channel];
+    var promptMsg = null;
 
-	if (reqChannel == null) {  // dose not exist in channel list, so it's a new p2p channel!
-		// ask me to accept or reject user request
-		if (confirm(`Do you allow <${reqUser.username}> to chat with you?`) == false) {
-			socket.emit("reject", { to: data.from, channel: data.channel });
-			return;
-		}
-		// wow, accepted...
-		createChannel(data.channel, true);
-		reqChannel = getChannels()[data.channel];
-	}
-	else if (reqChannel.p2p === false) {
-		// ask me to accept or reject user request
-		if (confirm(`Do you allow <${reqUser.username}> to join in <${reqChannel.name}> channel?`) == false) {
-			socket.emit("reject", { to: data.from, channel: data.channel });
-			return;
-		}
-	}
-	// encrypt the chat symmetricKey by requested user public key
-	var encryptedChannelKey = reqChannel.channelKey.asymEncrypt(data.pubKey)
-	//
-	// send data to requester user to join in current channel
-	socket.emit("accept", { to: data.from, channelKey: encryptedChannelKey, channel: reqChannel.name })
-	chatStarted(reqChannel.name);
+    if (reqChannel == null) {  
+        // New P2P request
+        promptMsg = `Do you allow <${reqUser.username}> to chat with you?`;
+    } else if (reqChannel.p2p === false) {
+        // Join Channel request
+        promptMsg = `Do you allow <${reqUser.username}> to join in <${reqChannel.name}> channel?`;
+    } else {
+        // Already allowed/exists
+        acceptRequest(data, reqChannel);
+        return;
+    }
+
+    // Use the custom non-blocking UI
+    showCustomConfirm(promptMsg, function(confirmed) {
+        if (confirmed) {
+            // If user accepted
+            if (reqChannel == null) {
+                createChannel(data.channel, true);
+                reqChannel = getChannels()[data.channel];
+            }
+            acceptRequest(data, reqChannel);
+        } else {
+            // If user rejected
+            socket.emit("reject", { to: data.from, channel: data.channel });
+        }
+    });
 });
 
 // when my chat request accepted by channel admin
@@ -548,3 +559,43 @@ function getNoncePassword(pass) {
 	}
 
 })(jQuery);
+
+function showCustomConfirm(message, callback) {
+    // Create the container
+    var div = document.createElement("div");
+    div.style.cssText = "position:fixed; top:10px; right:10px; width: 300px; background:#333; color:#fff; padding:15px; z-index:9999; border-radius:5px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); font-family: sans-serif;";
+    
+    // Create message text
+    var p = document.createElement("p");
+    p.innerText = message;
+    p.style.marginBottom = "10px";
+    div.appendChild(p);
+
+    // Create buttons container
+    var btnContainer = document.createElement("div");
+    btnContainer.style.textAlign = "right";
+
+    // Yes Button
+    var btnYes = document.createElement("button");
+    btnYes.innerText = "Accept";
+    btnYes.style.cssText = "background: #4CAF50; border: none; color: white; padding: 5px 10px; margin-right: 5px; cursor: pointer; border-radius: 3px;";
+    btnYes.onclick = function() {
+        document.body.removeChild(div);
+        callback(true);
+    };
+
+    // No Button
+    var btnNo = document.createElement("button");
+    btnNo.innerText = "Reject";
+    btnNo.style.cssText = "background: #f44336; border: none; color: white; padding: 5px 10px; cursor: pointer; border-radius: 3px;";
+    btnNo.onclick = function() {
+        document.body.removeChild(div);
+        callback(false);
+    };
+
+    btnContainer.appendChild(btnYes);
+    btnContainer.appendChild(btnNo);
+    div.appendChild(btnContainer);
+
+    document.body.appendChild(div);
+}
